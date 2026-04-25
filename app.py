@@ -118,16 +118,15 @@ def convert_pdf():
         
         docx_path = pdf_path.replace('.pdf', '.docx')
         
-        # Smart conversion
-        if is_text_pdf(pdf_path):
-            perfect_text_extract(pdf_path, docx_path)
-            pdf_type = "text_perfect"
-        else:
-            logger.info("Using pdf2docx")
-            cv = Converter(pdf_path)
-            cv.convert(docx_path)
-            cv.close()
-            pdf_type = "layout"
+        
+        perfect_text_extract(pdf_path, docx_path)
+        pdf_type = "text_perfect"
+        
+        logger.info("Using pdf2docx")
+        cv = Converter(pdf_path)
+        cv.convert(docx_path, start=0, end=None)
+        cv.close()
+        pdf_type = "standard"
         
         # Cleanup
         if os.path.exists(pdf_path):
