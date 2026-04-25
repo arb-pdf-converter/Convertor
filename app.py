@@ -24,35 +24,34 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def test_libreoffice():
-    """Test which LibreOffice command works"""
-    commands = ["libreoffice", "soffice", "/usr/bin/libreoffice", "/usr/bin/soffice"]
+    """Find working LibreOffice command"""
+    commands = ["libreoffice", "soffice"]
     for cmd in commands:
         try:
             result = subprocess.run([cmd, "--version"], 
-                                  capture_output=True, timeout=10)
+                                  stdout=subprocess.PIPE, 
+                                  stderr=subprocess.PIPE,
+                                  timeout=10)
             if result.returncode == 0:
-                logger.info(f"✅ LibreOffice found: {cmd}")
+                logger.info(f"✅ LibreOffice: {cmd}")
                 return cmd
         except:
             continue
-    logger.error("❌ No working LibreOffice command")
     return None
 
 LIBREOFFICE_CMD = test_libreoffice()
 
 def convert_with_libreoffice(pdf_path):
-    """Robust LibreOffice conversion"""
+    """FIXED: No capture_output conflict"""
     if not LIBREOFFICE_CMD:
-        logger.error("LibreOffice not available")
         return None
     
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
-            # FIXED command - works on all systems
             command = [
                 LIBREOFFICE_CMD,
                 "--headless",
-                "--invisible",  # Prevents GUI
+                "--invisible",
                 "--nodefault",
                 "--nofirststartwizard",
                 "--convert-to", "docx",
@@ -60,55 +59,59 @@ def convert_with_libreoffice(pdf_path):
                 pdf_path
             ]
             
-            logger.info(f"🔄 LibreOffice: {' '.join(command)}")
+            logger.info(f"🔄 Command: {' '.join(command)}")
             
+            # FIXED: Use stdout/stderr PIPE only (no capture_output)
             result = subprocess.run(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=180,  # 3 minutes
-                capture_output=True
+                timeout=180
             )
             
             stdout = result.stdout.decode('utf-8', errors='ignore')
             stderr = result.stderr.decode('utf-8', errors='ignore')
             
-            logger.info(f"STDOUT: {stdout}")
-            logger.error(f"STDERR: {stderr}")
             logger.info(f"Return code: {result.returncode}")
+            logger.info(f"STDOUT ({len(stdout)} chars): {stdout[:200]}...")
+            if stderr:
+                logger.warning(f"STDERR: {stderr}")
             
             if result.returncode != 0:
                 logger.error(f"LibreOffice failed (code {result.returncode})")
                 return None
             
-            # Find DOCX file
+            # Find and move DOCX
             for root, _, files in os.walk(temp_dir):
                 for file in files:
                     if file.endswith('.docx'):
                         src_path = os.path.join(root, file)
                         dst_path = os.path.join(UPLOAD_FOLDER, file)
                         shutil.move(src_path, dst_path)
-                        logger.info(f"✅ DOCX created: {dst_path}")
+                        logger.info(f"✅ DOCX: {dst_path} ({os.path.getsize(dst_path)} bytes)")
                         return dst_path
             
-            logger.error("No DOCX file found in output")
+            logger.error("No DOCX output found")
             return None
             
+    except subprocess.TimeoutExpired:
+        logger.error("Timeout (3 mins)")
+        return None
     except Exception as e:
-        logger.error(f"Conversion exception: {str(e)}")
+        logger.error(f"Exception: {str(e)}")
         return None
 
 @app.route('/')
 def home():
     return jsonify({
-        'status': '🚀 LibreOffice PDF to Word',
-        'libreoffice': LIBREOFFICE_CMD or 'not found'
+        'status': '🚀 LibreOffice PDF → Word',
+        'libreoffice': LIBREOFFICE_CMD or 'missing'
     })
 
 @app.route('/api/health')
 def health():
     return jsonify({
-        'status': 'healthy' if LIBREOFFICE_CMD else 'libreoffice_missing',
+        'status': 'healthy' if LIBREOFFICE_CMD else 'error',
         'command': LIBREOFFICE_CMD
     })
 
@@ -127,15 +130,12 @@ def convert_pdf():
         pdf_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(pdf_path)
 
-        logger.info(f"📥 Saved PDF: {filename} ({os.path.getsize(pdf_path)} bytes)")
+        logger.info(f"📥 PDF: {filename} ({os.path.getsize(pdf_path)} bytes)")
 
         docx_path = convert_with_libreoffice(pdf_path)
 
         if not docx_path or not os.path.exists(docx_path):
-            return jsonify({
-                'error': 'LibreOffice conversion failed',
-                'debug': 'Check Render logs for details'
-            }), 500
+            return jsonify({'error': 'Conversion failed - check logs'}), 500
 
         os.remove(pdf_path)
         
@@ -147,7 +147,7 @@ def convert_pdf():
         })
 
     except Exception as e:
-        logger.error(f"API Error: {str(e)}")
+        logger.error(f"API error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/download/<filename>')
