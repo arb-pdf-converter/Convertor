@@ -11,7 +11,8 @@ CORS(app)
 
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 UPLOAD_FOLDER = 'uploads'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,13 +20,14 @@ logger = logging.getLogger(__name__)
 ALLOWED_EXTENSIONS = {'pdf'}
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @app.route('/')
 def home():
     return jsonify({
-        'status': '🚀 High-Quality PDF to Word (pdf2docx Enhanced)',
-        'quality': 'Professional text + images + tables'
+        'status': 'PDF to Word - High Quality',
+        'ready': True
     })
 
 @app.route('/api/health')
@@ -35,53 +37,54 @@ def health():
 @app.route('/api/convert', methods=['POST'])
 def convert_pdf():
     try:
-        file = request.files.get('file')
-        if not file or not allowed_file(file.filename):
-            return jsonify({'error': 'Upload PDF only'}), 400
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
 
+        file = request.files['file']
+        if file.filename == '' or not allowed_file(file.filename):
+            return jsonify({'error': 'Invalid PDF file'}), 400
+
+        # Secure filename
         unique_id = str(uuid.uuid4())[:8]
-        filename = f"{unique_id}_{secure_filename(file.filename)}"
-        pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+        filename = secure_filename(file.filename)
+        safe_name = f"{unique_id}_{filename}"
+        pdf_path = os.path.join(UPLOAD_FOLDER, safe_name)
         file.save(pdf_path)
 
-        logger.info(f"Converting {filename} ({os.path.getsize(pdf_path)} bytes)")
+        logger.info(f"Converting: {safe_name}")
 
+        # Convert with high quality
         docx_path = pdf_path.replace('.pdf', '.docx')
-
-        # HIGH QUALITY pdf2docx settings
         cv = Converter(pdf_path)
-        cv.convert(
-            docx_path,
-            start=0,
-            end=None,
-            extract_images=True,      # Keep images
-            image_resolution=300,     # High DPI
-            # Default preserves: tables, fonts, layout
-        )
+        cv.convert(docx_path, 
+                  extract_images=True,
+                  image_resolution=250)
         cv.close()
 
+        # Cleanup
         os.remove(pdf_path)
-
-        logger.info(f"✅ {os.path.basename(docx_path)} created")
 
         return jsonify({
             'success': True,
-            'quality': 'high',
             'download_url': f'/api/download/{os.path.basename(docx_path)}',
+            'filename': os.path.basename(docx_path),
             'size': os.path.getsize(docx_path)
         })
 
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Conversion error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
     filepath = os.path.join(UPLOAD_FOLDER, filename)
     if os.path.exists(filepath):
-        return send_file(filepath, as_attachment=True, download_name=filename)
-    return jsonify({'error': 'File expired'}), 404
+        return send_file(filepath, 
+                        as_attachment=True,
+                        download_name=filename,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    return jsonify({'error': 'File not found'}), 404
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
