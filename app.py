@@ -29,8 +29,30 @@ def convert_with_libreoffice(pdf_path, output_dir):
             "--headless",
             "--convert-to", "docx",
             "--outdir", output_dir,
-            pdf_path
+            "-env:UserInstallation=file:///tmp/LibreOffice_Conversion",
+            os.path.abspath(pdf_path)
         ]
+
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60
+        )
+
+        print("STDOUT:", result.stdout.decode())
+        print("STDERR:", result.stderr.decode())
+
+        if result.returncode != 0:
+            logger.error("LibreOffice returned non-zero exit code")
+            return None
+
+        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+        return os.path.join(output_dir, base_name + ".docx")
+
+        except Exception as e:
+            logger.error(f"LibreOffice exception: {e}")
+            return None
 
         subprocess.run(command, check=True, timeout=60)
 
