@@ -1,5 +1,11 @@
 Flask==2.3.3
 Flask-CORS==4.0.0
 pdf2docx==0.5.6
-Werkzeug==2.3.7
+PyMuPDF==1.23.5
+pdfplumber==0.10.3
+python-docx==0.8.11
+pandas==2.1.4
 gunicorn==21.2.0
+Werkzeug==2.3.7
+opencv-python-headless==4.8.1.78
+camelot-py[base]==0.2.2
