@@ -43,6 +43,13 @@ def convert_with_libreoffice(pdf_path, output_dir):
         print("STDOUT:", result.stdout.decode())
         print("STDERR:", result.stderr.decode())
 
+        print("===== LIBREOFFICE STDOUT =====")
+        print(stdout_text)
+
+        print("===== LIBREOFFICE STDERR =====")
+        print(stderr_text)
+
+        logger.error(stderr_text)
         if result.returncode != 0:
             logger.error("LibreOffice returned non-zero exit code")
             return None
