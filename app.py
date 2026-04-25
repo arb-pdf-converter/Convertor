@@ -50,9 +50,9 @@ def convert_with_libreoffice(pdf_path, output_dir):
         base_name = os.path.splitext(os.path.basename(pdf_path))[0]
         return os.path.join(output_dir, base_name + ".docx")
 
-        except Exception as e:
-            logger.error(f"LibreOffice exception: {e}")
-            return None
+    except Exception as e:
+        logger.error(f"LibreOffice exception: {e}")
+        return None
 
         subprocess.run(command, check=True, timeout=60)
 
