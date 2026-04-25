@@ -5,6 +5,7 @@ from werkzeug.utils import secure_filename
 import uuid
 import logging
 import subprocess
+import tempfile
 
 app = Flask(__name__)
 CORS(app)
@@ -21,68 +22,69 @@ ALLOWED_EXTENSIONS = {'pdf'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-
-def convert_with_libreoffice(pdf_path, output_dir):
+def convert_with_libreoffice(pdf_path):
+    """Convert PDF to DOCX using LibreOffice - FIXED"""
     try:
-        command = [
-            "soffice",
-            "--headless",
-            "--convert-to", "docx",
-            "--outdir", output_dir,
-            "-env:UserInstallation=file:///tmp/LibreOffice_Conversion",
-            os.path.abspath(pdf_path)
-        ]
-
-        result = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=60
-        )
-
-        print("STDOUT:", result.stdout.decode())
-        print("STDERR:", result.stderr.decode())
-
-        print("===== LIBREOFFICE STDOUT =====")
-        print(stdout_text)
-
-        print("===== LIBREOFFICE STDERR =====")
-        print(stderr_text)
-
-        logger.error(stderr_text)
-        if result.returncode != 0:
-            logger.error("LibreOffice returned non-zero exit code")
+        # Create temp output directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            command = [
+                "libreoffice",  # Changed from 'soffice'
+                "--headless",
+                "--convert-to", "docx",
+                "--outdir", temp_dir,
+                pdf_path
+            ]
+            
+            logger.info(f"Running LibreOffice: {' '.join(command)}")
+            
+            result = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=120,  # 2 minutes timeout
+                capture_output=True
+            )
+            
+            logger.info(f"LibreOffice stdout: {result.stdout.decode()}")
+            logger.info(f"LibreOffice stderr: {result.stderr.decode()}")
+            
+            if result.returncode != 0:
+                logger.error(f"LibreOffice failed with code {result.returncode}")
+                return None
+            
+            # Find output DOCX file
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.endswith('.docx'):
+                        docx_path = os.path.join(root, file)
+                        # Move to uploads folder
+                        final_path = os.path.join(UPLOAD_FOLDER, file)
+                        os.rename(docx_path, final_path)
+                        return final_path
+            
             return None
-
-        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-        return os.path.join(output_dir, base_name + ".docx")
-
-    except Exception as e:
-        logger.error(f"LibreOffice exception: {e}")
-        return None
-
-        subprocess.run(command, check=True, timeout=60)
-
-        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-        return os.path.join(output_dir, base_name + ".docx")
-
+            
     except subprocess.TimeoutExpired:
-        logger.error("Conversion timed out")
+        logger.error("LibreOffice conversion timed out")
         return None
-    except subprocess.CalledProcessError as e:
-        logger.error(f"LibreOffice failed: {e}")
+    except Exception as e:
+        logger.error(f"LibreOffice error: {str(e)}")
         return None
-
 
 @app.route('/')
 def home():
-    return jsonify({'status': '🚀 PDF to Word API (LibreOffice) ✅'})
-
+    return jsonify({'status': '🚀 LibreOffice PDF to Word API ✅'})
 
 @app.route('/api/health')
 def health():
-    return jsonify({'status': 'healthy'})
-
+    # Test LibreOffice
+    try:
+        result = subprocess.run(["libreoffice", "--version"], 
+                              capture_output=True, timeout=10)
+        version = result.stdout.decode().strip()
+        return jsonify({'status': 'healthy', 'libreoffice': version})
+    except:
+        return jsonify({'status': 'error', 'libreoffice': 'not found'})
 
 @app.route('/api/convert', methods=['POST'])
 def convert_pdf():
@@ -94,48 +96,44 @@ def convert_pdf():
         if not file or file.filename == '' or not allowed_file(file.filename):
             return jsonify({'error': 'Upload valid PDF'}), 400
 
-        # Save file
+        # Save uploaded PDF
         unique_id = str(uuid.uuid4())[:8]
         filename = f"{unique_id}_{secure_filename(file.filename)}"
         pdf_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(pdf_path)
 
-        # Convert using LibreOffice
-        docx_path = convert_with_libreoffice(pdf_path, UPLOAD_FOLDER)
+        logger.info(f"Starting conversion: {filename}")
+
+        # Convert with LibreOffice
+        docx_path = convert_with_libreoffice(pdf_path)
 
         if not docx_path or not os.path.exists(docx_path):
-            return jsonify({'error': 'Conversion failed'}), 500
+            return jsonify({'error': 'LibreOffice conversion failed'}), 500
 
-        # Remove original PDF
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
+        # Cleanup PDF
+        os.remove(pdf_path)
 
         return jsonify({
             'success': True,
-            'pdf_type': 'libreoffice',
-            'download_url': f'/api/download/{os.path.basename(docx_path)}'
+            'message': 'High-quality LibreOffice conversion complete!',
+            'download_url': f'/api/download/{os.path.basename(docx_path)}',
+            'filename': os.path.basename(docx_path)
         })
 
     except Exception as e:
-        logger.error(f"Conversion error: {e}")
+        logger.error(f"Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
     filepath = os.path.join(UPLOAD_FOLDER, filename)
-
     if os.path.exists(filepath):
-        return send_file(
-            filepath,
-            as_attachment=True,
-            download_name=filename,
-            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        )
-
+        return send_file(filepath, 
+                        as_attachment=True,
+                        download_name=filename,
+                        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
     return jsonify({'error': 'File expired'}), 404
 
-
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
